@@ -18,10 +18,8 @@ namespace py = pybind11;
 
 static vector<glm::mat4> readViews(const string &p);
 
-constexpr uint32_t batch_size = 32;
-
 // Create a tensor that references this memory
-static at::Tensor convertToTensor(void *dev_ptr, int dev_id)
+static at::Tensor convertToTensor(void *dev_ptr, int dev_id, uint32_t batch_size)
 {
     array<int64_t, 4> sizes {{batch_size, 256, 256, 4}};
 
@@ -52,7 +50,8 @@ private:
 
 class V4RExample {
 public:
-    V4RExample(const string &scene_path, const string &views_path, int gpu_id)
+    V4RExample(const string &scene_path, const string &views_path, int gpu_id,
+               uint32_t batch_size)
         : renderer_({
               gpu_id,  // gpuID
               1,  // numLoaders
@@ -70,12 +69,15 @@ public:
                   RenderFeatures::MeshColor::Texture,
                   RenderFeatures::Pipeline::Unlit,
                   RenderFeatures::Outputs::Color,
-                  {}
+                  RenderFeatures::Options::DoubleBuffered
               }
           }),
           loader_(renderer_.makeLoader()),
           cmd_strm_(renderer_.makeCommandStream()),
-          color_batch_(convertToTensor(cmd_strm_.getColorDevPtr(), gpu_id)),
+          color_batches_ {
+              convertToTensor(cmd_strm_.getColorDevPtr(0), gpu_id, batch_size),
+              convertToTensor(cmd_strm_.getColorDevPtr(1), gpu_id, batch_size),
+          },
           views_(readViews(views_path)),
           loaded_scenes_(),
           view_cnt_(0)
@@ -95,7 +97,7 @@ public:
     {
     }
 
-    at::Tensor getColorTensor() const { return color_batch_; }
+    at::Tensor getColorTensor(uint32_t frame_idx) const { return color_batches_[frame_idx]; }
 
     PyTorchSync render()
     {
@@ -112,7 +114,7 @@ private:
     BatchRenderer renderer_;
     AssetLoader loader_;
     CommandStream cmd_strm_;
-    at::Tensor color_batch_;
+    vector<at::Tensor> color_batches_;
     vector<glm::mat4> views_;
     vector<shared_ptr<Scene>> loaded_scenes_;
     uint64_t view_cnt_;
@@ -140,7 +142,7 @@ vector<glm::mat4> readViews(const string &p)
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     py::class_<V4RExample>(m, "V4RExample")
-        .def(py::init<const string &, const string &, int>())
+        .def(py::init<const string &, const string &, int, uint32_t>())
         .def("render", &V4RExample::render)
         .def("getColorTensor", &V4RExample::getColorTensor);
 
