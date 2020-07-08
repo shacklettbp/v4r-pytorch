@@ -5,7 +5,11 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 
+#include <glm/gtc/type_ptr.hpp>
+#include <glm/gtx/string_cast.hpp>
+
 #include <v4r.hpp>
+#include <v4r/debug.hpp>
 
 #include <array>
 #include <fstream>
@@ -51,7 +55,7 @@ private:
 class V4RExample {
 public:
     V4RExample(const string &scene_path, const string &views_path, int gpu_id,
-               uint32_t batch_size)
+               uint32_t batch_size, at::Tensor coordinate_txfm)
         : renderer_({
               gpu_id,  // gpuID
               1,  // numLoaders
@@ -59,12 +63,13 @@ public:
               batch_size, // batchSize
               256, // imgWidth,
               256, // imgHeight
-              glm::mat4(
-                  1, 0, 0, 0,
-                  0, -1.19209e-07, -1, 0,
-                  0, 1, -1.19209e-07, 0,
-                  0, 0, 0, 1
-              ), // Habitat coordinate txfm matrix
+              glm::transpose(glm::make_mat4(coordinate_txfm.data_ptr<float>())),
+              //glm::mat4(
+              //    1, 0, 0, 0,
+              //    0, -1.19209e-07, -1, 0,
+              //    0, 1, -1.19209e-07, 0,
+              //    0, 0, 0, 1
+              //), // Habitat coordinate txfm matrix
               {
                   RenderFeatures::MeshColor::Texture,
                   RenderFeatures::Pipeline::Unlit,
@@ -80,14 +85,15 @@ public:
           },
           views_(readViews(views_path)),
           loaded_scenes_(),
-          view_cnt_(0)
+          view_cnt_(0),
+          rdoc_()
     {
         loaded_scenes_.emplace_back(loader_.loadScene(scene_path));
 
-        envs.reserve(batch_size);
+        envs_.reserve(batch_size);
 
         for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
-            envs.emplace_back(move(
+            envs_.emplace_back(move(
                 cmd_strm_.makeEnvironment(loaded_scenes_.back(), 
                                           90, 0.01, 1000)));
         }
@@ -101,11 +107,30 @@ public:
 
     PyTorchSync render()
     {
-        for (auto &env : envs) {
+        for (auto &env : envs_) {
             env.setCameraView(views_[view_cnt_++]);
         }
 
-        auto sync = cmd_strm_.render(envs);
+        auto sync = cmd_strm_.render(envs_);
+
+        return PyTorchSync(move(sync));
+    }
+    
+    PyTorchSync renderViews(const vector<at::Tensor> &views) {
+        int batch_idx = 0;
+        for (auto &env : envs_) {
+            const float *data = views[batch_idx].data_ptr<float>();
+            glm::vec3 eye = glm::make_vec3(data);
+            glm::vec3 target = glm::make_vec3(data + 3);
+
+            env.setCameraView(eye, target, glm::vec3(0.f, 1.f, 0.f));
+
+            batch_idx++;
+        }
+
+        rdoc_.startFrame();
+        auto sync = cmd_strm_.render(envs_);
+        rdoc_.endFrame();
 
         return PyTorchSync(move(sync));
     }
@@ -118,7 +143,8 @@ private:
     vector<glm::mat4> views_;
     vector<shared_ptr<Scene>> loaded_scenes_;
     uint64_t view_cnt_;
-    vector<Environment> envs;
+    vector<Environment> envs_;
+    RenderDoc rdoc_;
 };
 
 vector<glm::mat4> readViews(const string &p)
@@ -142,8 +168,9 @@ vector<glm::mat4> readViews(const string &p)
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     py::class_<V4RExample>(m, "V4RExample")
-        .def(py::init<const string &, const string &, int, uint32_t>())
+        .def(py::init<const string &, const string &, int, uint32_t, at::Tensor>())
         .def("render", &V4RExample::render)
+        .def("renderViews", &V4RExample::renderViews)
         .def("getColorTensor", &V4RExample::getColorTensor);
 
     py::class_<PyTorchSync>(m, "PyTorchSync")

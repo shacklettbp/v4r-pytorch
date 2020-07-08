@@ -10,6 +10,6 @@ setup(name='v4r_example',
                                  sources=['v4r_example.cpp'],
                                  extra_compile_args=[f"-I{include_dir}"],
                                  extra_link_args=[f"-L{lib_dir}", "-lv4r",
-                                                  "-Wl,--no-as-needed", "-lv4r_headless_hacks",
+                                                  "-Wl,--no-as-needed", "-lv4r_headless_hacks", "-lv4r_debug",
                                                   f"-Wl,-rpath={lib_dir}"])],
       cmdclass={'build_ext': BuildExtension})
