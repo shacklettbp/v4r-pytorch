@@ -65,7 +65,13 @@ public:
                   0, -1.19209e-07, -1, 0,
                   0, 1, -1.19209e-07, 0,
                   0, 0, 0, 1
-              ) // Habitat coordinate txfm matrix
+              ), // Habitat coordinate txfm matrix
+              {
+                  RenderFeatures::MeshColor::Texture,
+                  RenderFeatures::Pipeline::Unlit,
+                  RenderFeatures::Outputs::Color,
+                  {}
+              }
           }),
           loader_(renderer_.makeLoader()),
           cmd_strm_(renderer_.makeCommandStream()),
@@ -103,9 +109,9 @@ public:
     }
 
 private:
-    Unlit::BatchRenderer renderer_;
-    Unlit::AssetLoader loader_;
-    Unlit::CommandStream cmd_strm_;
+    BatchRenderer renderer_;
+    AssetLoader loader_;
+    CommandStream cmd_strm_;
     at::Tensor color_batch_;
     vector<glm::mat4> views_;
     vector<shared_ptr<Scene>> loaded_scenes_;
